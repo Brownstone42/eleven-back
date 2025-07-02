@@ -1,0 +1,16 @@
+# Node.js
+node_modules/
+npm-debug.log
+.env
+.DS_Store
+
+# IDEs and other
+.vscode/
+*.log
+temp/
+dist/
+build/
+
+# OTHER
+private/
+.env
