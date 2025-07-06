@@ -5,6 +5,7 @@ import fetch from 'node-fetch'
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 import { SpeechClient } from '@google-cloud/speech'
 import { WebSocketServer } from 'ws'
+import * as sdk from 'microsoft-cognitiveservices-speech-sdk'
 
 dotenv.config()
 
@@ -89,7 +90,8 @@ wss.on('connection', ws => {
                                     console.log('Backend: Final STT result received. Calling Gemini...')
 
                                     try {
-                                        let chatHistory = [{ role: "user", parts: [{ text: transcript }] }]
+                                        const promptForGemini = `คุณคือผู้ช่วยที่ตอบคำถามอย่างรวดเร็วและกระชับที่สุด ตอบกลับไม่เกิน 2 ประโยค และห้ามใช้ Emoji หรือสัญลักษณ์พิเศษใดๆ\n\nคำถาม: ${transcript}`
+                                        let chatHistory = [{ role: "user", parts: [{ text: promptForGemini }] }]
 
                                         const geminiPayload = { contents: chatHistory }
                                         const geminiApiKey = process.env.GEMINI_API_KEY
@@ -121,10 +123,52 @@ wss.on('connection', ws => {
 
                                         // For now, send AI's text response back to frontend
                                         // In the next step, we'll convert this to speech
-                                        ws.send(JSON.stringify({ aiResponseText: aiText }))
-                                    } catch (geminiError) {
-                                        console.error('Backend: Error calling Gemini API:', geminiError)
-                                        ws.send(JSON.stringify({ error: `AI response error: ${geminiError.message}` }))
+                                        //ws.send(JSON.stringify({ aiResponseText: aiText }))
+
+                                        // --- NEW: Text-to-Speech (Microsoft Azure Cognitive Services Speech) ---
+                                        console.log('Backend: Starting Azure TTS...')
+
+                                        const speechKey = process.env.AZURE_SPEECH_KEY
+                                        const speechRegion = process.env.AZURE_SPEECH_REGION
+                                        const voiceName = process.env.AZURE_TTS_VOICE_NAME || "th-TH-AcharaNeural"
+
+                                        if (!speechKey || !speechRegion) {
+                                            throw new Error('Azure Speech Key or Region not configured in environment variables.');
+                                        }
+
+                                        const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, speechRegion)
+                                        speechConfig.speechSynthesisVoiceName = voiceName
+                                        // Output format for audio, e.g., mp3, opus. Needs to be playable by browser.
+                                        speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Audio24Khz160KBitRateMonoMp3 // A common MP3 format
+
+                                        const synthesizer = new sdk.SpeechSynthesizer(speechConfig, undefined) // undefined for default audio output
+
+                                        const azureAudioBuffer = await new Promise((resolve, reject) => {
+                                            synthesizer.speakTextAsync(
+                                                aiText,
+                                                result => {
+                                                    if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+                                                        resolve(Buffer.from(result.audioData))
+                                                    } else {
+                                                        const cancellationDetails = sdk.SpeechSynthesisCancellationDetails.fromResult(result)
+                                                        reject(new Error(`Azure TTS canceled: ${cancellationDetails.reason}. Error details: ${cancellationDetails.errorDetails}`))
+                                                    }
+                                                },
+                                                error => {
+                                                    synthesizer.close()
+                                                    reject(new Error(`Azure TTS error: ${error}`))
+                                                }
+                                            )
+                                        })
+
+                                        const aiAudioBase64 = azureAudioBuffer.toString('base64')
+                                        console.log('Backend: Azure TTS completed. Sending audio to frontend.')
+
+                                        // Send AI's audio response (base64) back to frontend
+                                        ws.send(JSON.stringify({ aiAudioBase64: aiAudioBase64 }))
+                                    } catch (aiProcessingError) {
+                                        console.error('Backend: Error in AI response generation or TTS:', aiProcessingError);
+                                        ws.send(JSON.stringify({ error: `AI/TTS error: ${aiProcessingError.message}` }));
                                     }
                                 }
                             }
