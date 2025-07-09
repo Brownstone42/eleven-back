@@ -7,12 +7,6 @@ import { SpeechClient } from '@google-cloud/speech'
 import { WebSocketServer } from 'ws'
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk'
 
-import { SessionsClient } from '@google-cloud/dialogflow-cx'
-import { v4 as uuidv4 } from 'uuid'
-
-const sessionClient = new SessionsClient()
-console.log('Dialogflow CX session client initialized.')
-
 dotenv.config()
 
 const googleSpeechClient = new SpeechClient()
